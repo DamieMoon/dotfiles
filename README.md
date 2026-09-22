@@ -356,3 +356,79 @@ Issues, PRs and direct contact welcome.
 
 - **Issues / Discussions** — [GitHub issue tracker](https://github.com/gottz/dotfiles/issues)
 - **Contact** — <https://contact.gottz.de>
+
+---
+
+## Ubuntu / WSL2 port
+
+This branch (`wsl`) adapts the repo for **Ubuntu 26.04 running under WSL2**.
+Upstream targets Arch Linux; several files do not work unmodified. Each deviation
+below is a fix for a verified failure, not a preference.
+
+### Why each change was necessary
+
+| File | Upstream behaviour | Why it breaks on Ubuntu/WSL | Change |
+|------|--------------------|------------------------------|--------|
+| `etc/profile.d/00-local-bin.sh` | calls `append_path` | `append_path` is defined by **Arch's** `/etc/profile`. Ubuntu's `/etc/profile` has no such function, so the script aborts with `append_path: command not found` and `~/.local/bin` never reaches `$PATH`. Under zsh this is the *only* path that adds it — `~/.profile`, which Ubuntu uses for this, is not read by zsh. Net effect: `claude` and anything else in `~/.local/bin` is unreachable. | Define `append_path` as a fallback when absent. Also `[[ ]]` → POSIX `[ ]` and `-r` → `-d` for directory tests. |
+| `etc/profile.d/00-local-bin.sh` | appends `~/.local/bin` | WSL interop injects ~15 Windows directories into `$PATH` (e.g. `/mnt/c/Program Files/nodejs`). Anything appended lands *behind* them and can be shadowed by a Windows executable of the same name. Ubuntu's own `~/.profile` prepends for exactly this reason. | `~/.local/bin` is prepended; everything else still appended. |
+| `etc/profile.d/01-editor.sh` | `export EDITOR=nvim` (unconditional) | neovim is not installed. `git commit`, `git rebase -i`, `visudo` and `crontab -e` all fail with `nvim: command not found`. grml would otherwise have set `EDITOR=${EDITOR:-vim}`. | `EDITOR=/usr/bin/editor` — Ubuntu's `update-alternatives` link. Change the underlying editor with `update-alternatives --config editor`, no dotfile edit needed. |
+| `etc/zsh/zshrc.local` | sources `/usr/share/nvm/init-nvm.sh` | Arch package path. Ubuntu has no nvm package; nvm installs into `~/.nvm`. | Guard on `$NVM_DIR`/`~/.nvm`, falling back to the Arch path. No-op until nvm exists. |
+| `home/.config/wezterm/wezterm.lua` | `set_default_prog()` → PowerShell | Setting `default_prog` together with a WSL `default_domain` makes WezTerm try to run `pwsh.exe` *inside Linux*. | `set_default_prog()` calls removed; `config.default_domain = 'WSL:Ubuntu'` instead. |
+| `home/.config/wezterm/wezterm.lua` | `launch_menu` entries without a domain | Same trap via the menu: entries inherit `default_domain`, so "PowerShell 7" would launch a Windows binary inside WSL. | Every Windows entry gets `domain = { DomainName = 'local' }`; a WSL entry is added at the top. |
+| `home/.config/wezterm/wezterm.lua` | `font = 'Pragmasevka Nerd Font'` | Preference, not a defect. | `font_with_fallback { 'JetBrainsMono Nerd Font', 'Pragmasevka Nerd Font' }`. |
+
+### grml-zsh-config
+
+`zshrc.local` is an overlay on [grml-zsh-config](https://grml.org/zsh/) and depends on its
+`check_com` helper. **Ubuntu has no `grml-zsh-config` package** (`apt-cache search grml`
+returns only `grml-debootstrap` and friends). The setup script fetches grml's zshrc from
+upstream and installs it as `/etc/zsh/zshrc`, using `dpkg-divert --rename` first — the same
+mechanism Debian's own package uses — so apt does not raise a conffile conflict on the next
+zsh upgrade.
+
+It also ensures `/etc/zsh/zprofile` sources `/etc/profile`. Without it `/etc/profile.d/*`
+never runs under zsh, which silently reintroduces the `$PATH` problem above.
+
+### Deliberately not deployed
+
+- **`etc/gitconfig`** and **`home/.gitconfig`** — contain the upstream author's identity and
+  SSH signing key. Using them would sign your commits as someone else.
+- **`home/.ssh/authorized_keys`** and **`allowed_signers`** — the upstream author's public
+  keys. Deploying `authorized_keys` would grant them SSH access to this machine.
+- **`usr/local/bin/loadavg`** — a precompiled binary built for Arch.
+- **`dpsql`, `needsrestart`, `tmux-notify`, `harden_fstab`, `disable_nullok`,
+  `qemu-test-decrypt`** — depend on pacman, docker or tmux, none of which are in use here.
+- **`etc/profile.d/dps.sh`, `ipinfo.sh`** — docker- and API-token-dependent. Link them later
+  if those become relevant.
+- **tmux config, kanata, modprobe, sysctl, wireplumber, pacman hooks** — not applicable to
+  WSL2 (no hardware access, no pacman) or not wanted.
+
+### Not installed
+
+`tmux`, `lsd`, `bat`, `neovim`, `yazi`, `docker`. The `zshrc.local` blocks that use them are
+all `check_com`-guarded and degrade to silent no-ops.
+
+`fzf` **is** installed, and that is not optional: `zshrc.local` raises `HISTSIZE` from grml's
+5 000 to 1 000 000. grml binds `Ctrl-R` to `history-incremental-pattern-search-backward`,
+which steps backwards one match at a time with no candidate list. That is usable over 5 000
+entries and useless over a million. The large history and `source <(fzf --zsh)` in the same
+file are one decision, not two.
+
+### Repo ownership
+
+`/opt/dotfiles` is owned by the login user rather than root, so the repo can be edited and
+committed without `sudo`. The trade-off is that `/etc/profile.d` scripts are then owned by a
+non-root user. On a single-user WSL2 install where that user already has sudo, this grants no
+privilege they did not have. Do not copy this choice to a multi-user host.
+
+### WezTerm config lives in two places
+
+WezTerm runs on Windows and cannot follow symlinks into the WSL ext4 filesystem, so
+`home/.config/wezterm/wezterm.lua` is **copied** to `C:\Users\<user>\.config\wezterm\`
+rather than linked. Run `.bin/sync-wezterm` after editing the repo copy.
+
+Fonts are likewise a Windows concern: WezTerm renders there, so Nerd Fonts installed inside
+WSL have no effect on it. They are installed per-user under
+`%LOCALAPPDATA%\Microsoft\Windows\Fonts` with matching `HKCU` registry entries, plus an
+`AddFontResourceW` call and a `WM_FONTCHANGE` broadcast — registry entries alone are not
+picked up by already-running applications.
