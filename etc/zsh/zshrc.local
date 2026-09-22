@@ -43,7 +43,17 @@ if check_com -c fzf; then
 fi
 
 # automagic nvm use . in directories with .nvmrc
-if [[ -r "/usr/share/nvm/init-nvm.sh" ]]; then
+# WSL-PORT (Ubuntu): upstream sourcar /usr/share/nvm/init-nvm.sh, vilket är
+# Archs paketsokvag. Ubuntu har inget nvm-paket - nvm installeras i ~/.nvm av
+# sitt eget skript. Blocket ar en no-op tills nvm faktiskt finns.
+# Relevant har: `npm` i PATH pekar pa WINDOWS Node via WSL-interop
+# (/mnt/c/Program Files/nodejs). Installerar du nvm prependar den sin shim och
+# tar over - vilket ar det du vill.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [[ -r "$NVM_DIR/nvm.sh" ]]; then
+  source "$NVM_DIR/nvm.sh"
+  [[ -r "$NVM_DIR/bash_completion" ]] && source "$NVM_DIR/bash_completion"
+elif [[ -r "/usr/share/nvm/init-nvm.sh" ]]; then
   source "/usr/share/nvm/init-nvm.sh"
 fi
 
