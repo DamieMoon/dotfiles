@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# sync-wezterm — kopierar repots WezTerm-config till Windows-sidan.
+#
+# WezTerm körs på Windows och kan inte följa symlinks in i WSL:s ext4, så
+# configen måste KOPIERAS dit. Kör efter varje ändring i
+# home/.config/wezterm/. WezTerm laddar om configen automatiskt.
+set -euo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+src="$repo/home/.config/wezterm"
+
+winprofile="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null </dev/null | tr -d '\r')"
+[ -n "$winprofile" ] || { echo "sync-wezterm: hittar inte %USERPROFILE% (körs detta i WSL?)" >&2; exit 1; }
+dst="$(wslpath -u "$winprofile")/.config/wezterm"
+
+mkdir -p "$dst"
+cp -f "$src/wezterm.lua" "$dst/wezterm.lua"
+# versionscache för has_identitiesonly_fix() — sparar ett nätverksanrop per uppstart
+cp -f "$src"/.pr7739-* "$dst/" 2>/dev/null || true
+
+echo "wezterm.lua → $dst"

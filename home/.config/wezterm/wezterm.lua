@@ -1,3 +1,6 @@
+-- Baserad på https://github.com/GottZ/dotfiles (home/.config/wezterm/wezterm.lua)
+-- WSL2-anpassningar är markerade med "WSL-PORT:".
+
 local wezterm = require 'wezterm'
 local act = wezterm.action
 
@@ -8,7 +11,14 @@ config.enable_csi_u_key_encoding = false
 
 -- config.window_background_opacity = 0.96
 
-config.font = wezterm.font('Pragmasevka Nerd Font')
+-- WSL-PORT: JetBrainsMono som primär, Pragmasevka som fallback.
+-- Byt ordning på raden för att jämföra. Båda är installerade i
+-- %LOCALAPPDATA%\Microsoft\Windows\Fonts och registrerade i HKCU.
+config.font = wezterm.font_with_fallback {
+  'JetBrainsMono Nerd Font',
+  'Pragmasevka Nerd Font',
+}
+
 -- config.color_scheme = 'zenwritten_dark'
 config.ssh_backend = "Ssh2"
 
@@ -53,7 +63,6 @@ config.colors.tab_bar = {
   active_tab = {
     fg_color = config.colors.foreground,
     bg_color = config.colors.background,
-    -- underline = "Single",
     underline = "None",
     italic = false,
     intensity = "Bold",
@@ -68,12 +77,7 @@ config.colors.tab_bar = {
 }
 config.colors.tab_bar.new_tab = config.colors.tab_bar.inactive_tab
 
--- config.colors.compose_cursor = "orange"
-
-
-
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
-  -- config.ssh_backend = "LibSsh"
   local ok, stdout, _ = wezterm.run_child_process { 'sc.exe', 'query', 'ssh-agent' }
   if ok and stdout:find('RUNNING') then
     local pipe = "\\\\.\\pipe\\openssh-ssh-agent"
@@ -144,7 +148,6 @@ for host, ssh_config in pairs(wezterm.enumerate_ssh_hosts()) do
 end
 
 config.keys = {
-  --{ key = "Insert", mods = "SHIFT", action = act.PasteFrom("PrimarySelection") }
   { key = "Insert", mods = "SHIFT", action = act.PasteFrom("Clipboard") }
 }
 
@@ -156,15 +159,14 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     return wezterm.run_child_process { 'where.exe', '/Q', executable }
   end
 
-  local set_default_prog = function()
-    if config.default_prog then
-      return
-    end
+  -- WSL-PORT: set_default_prog() borttagen. Den satte config.default_prog till
+  -- PowerShell. Tillsammans med default_domain = WSL nedan hade WezTerm försökt
+  -- köra pwsh.exe *inuti* Linux. Standardskalet styrs nu av default_domain.
 
-    if #launch_menu > 0 then
-      config.default_prog = launch_menu[1].args
-    end
-  end
+  -- WSL-PORT: varje Windows-post får domain = 'local'. Utan det ärver de
+  -- default_domain (WSL) och skulle försöka starta Windows-binärer i Linux
+  -- — samma fälla som ovan, fast via menyn.
+  local LOCAL = { DomainName = 'local' }
 
   local pwsh = is_executable_in_path 'pwsh.exe'
   local powershell = is_executable_in_path 'powershell.exe'
@@ -189,32 +191,39 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     end
   end
 
+  -- WSL-PORT: WSL överst så den är första valet i menyn också.
+  table.insert(launch_menu, {
+    label = 'WSL: Ubuntu (zsh)',
+    domain = { DomainName = 'WSL:Ubuntu' },
+  })
+
   if pwsh then
     table.insert(launch_menu, {
       label = 'PowerShell 7',
       args = { 'pwsh.exe', '-NoLogo' },
+      domain = LOCAL,
     })
-    set_default_prog()
   end
 
   if powershell then
     table.insert(launch_menu, {
       label = 'PowerShell 6',
       args = { 'powershell.exe', '-NoLogo' },
+      domain = LOCAL,
     })
-    set_default_prog()
   end
 
   table.insert(launch_menu, {
     label = 'cmd',
     args = { os.getenv 'COMSPEC', '/k' },
+    domain = LOCAL,
   })
-  set_default_prog()
 
   if git and bash_path ~= '' then
     table.insert(launch_menu, {
       label = 'Git Bash',
       args = { bash_path, '-i', '-l' },
+      domain = LOCAL,
     })
   end
 
@@ -222,6 +231,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     table.insert(launch_menu, {
       label = 'Elvish',
       args = { 'elvish.exe' },
+      domain = LOCAL,
     })
   end
 
@@ -229,17 +239,9 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     table.insert(launch_menu, {
       label = 'NuShell',
       args = { 'nu.exe' },
+      domain = LOCAL,
     })
   end
-
-  -- Add WSL to the launch menu if it is available
-  --local wsl_available = wezterm.run_child_process { 'wsl.exe', '--list', '--quiet' }
-  --if wsl_available then
-  --  table.insert(launch_menu, {
-  --    label = 'WSL',
-  --    args = { 'wsl.exe', '-d', 'Ubuntu-20.04' }, -- Change to your preferred distro
-  --  })
-  --end
 
   -- Find installed visual studio version(s) and add their compilation
   -- environment command prompts to the menu
@@ -258,6 +260,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
           .. vsvers
           .. '/BuildTools/VC/Auxiliary/Build/vcvars64.bat',
       },
+      domain = LOCAL,
     })
   end
 
@@ -267,9 +270,14 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       "explorer.exe",
       wezterm.config_dir,
     },
+    domain = LOCAL,
   })
 
   config.launch_menu = launch_menu
+
+  -- WSL-PORT: starta i WSL som standard. WezTerm registrerar WSL-domäner
+  -- automatiskt som 'WSL:<distro>'; distron heter "Ubuntu" här.
+  config.default_domain = 'WSL:Ubuntu'
 
 else
   -- set selected cursor theme on linux
